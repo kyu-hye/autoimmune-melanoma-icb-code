@@ -1,0 +1,470 @@
+#Authors : Kyu-Hye Chun, Ye-Chan Park
+#Date : 23th of August 2023
+#req. packages : Seurat
+#                gsva
+#                ggplot2
+#                Cellchat
+#                enrichGO
+# note: If you do not have one of these packages installed, install it from the source.
+#load necessary packages and data
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(RColorBrewer)
+
+##################################################################
+##STEP1 : Creating a Seurat object from data imported from GEO
+##################################################################
+# 1-1) Systemic Erythematosus Lupus data is available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE186476
+
+
+#Analysis of only immune cells in SLE data
+sleimmunecell <- subset(sledata, seurat_clusters == "0"| seurat_clusters=="1"| seurat_clusters=="2"| seurat_clusters=="3"| seurat_clusters=="4"| seurat_clusters=="5"| seurat_clusters=="7"| seurat_clusters=="8"| seurat_clusters=="9"| seurat_clusters=="10"| seurat_clusters=="11")
+sleimmunecell <- FindNeighbors(sleimmunecell, dims = 1:10)
+sleimmunecell <- FindClusters(sleimmunecell,graph.name = "integrated_snn",resolution = 0.6)
+sleimmunecell <- RunUMAP(sleimmunecell, dims = 1:10)
+DimPlot(sleimmunecell, reduction = "umap", split.by = "Condition")
+
+FeaturePlot(sleimmunecell, "CD3D", cols = c("lightgrey","red")) #Tcell marker
+FeaturePlot(sleimmunecell, "CD14", cols = c("lightgrey","red")) #Monocyte/Macrophage marker
+FeaturePlot(sleimmunecell, "HLA-DRA", cols = c("lightgrey","red")) #Dendritic cell marker
+
+#DEGs in each SLE immune cell clusters
+onlysle <- subset(sleimmunecell, Condition == "NL")
+Idents(onlysle) <- onlysle$seurat_clusters
+onlysle.markers <- FindAllMarkers(onlysle, min.pct = 0.25, logfc.threshold = 0.25)
+write.csv(onlysle.markers, "onlysledeg.csv")
+
+# 1-2) Atopic Dermatitis data is available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE162054 
+# & https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE153760
+
+
+Idents(ADdata) <- ADdata$anno
+ADdata <- subset(ADdata, idents = c("TC-1", "TC-2", "TC-3", "TREG", "NP", "DC", "LC"))
+ADdata <- FindNeighbors(ADdata, dims = 1:10)
+ADdata <- FindClusters(ADdata,graph.name = "integrated_snn",resolution = 0.8)
+ADdata <- RunUMAP(ADdata, dims = 1:10)
+FeaturePlot(ADdata, "PTPRC")
+
+#Analysis of only immune cells in AD data
+adimmunecell <- subset(ADdata, seurat_clusters == "0"| seurat_clusters=="1"| seurat_clusters=="2"| seurat_clusters=="3"| seurat_clusters=="4"| seurat_clusters=="5"| seurat_clusters=="6"| seurat_clusters=="8"| seurat_clusters=="9"| seurat_clusters=="10"| seurat_clusters=="12"| seurat_clusters=="13"| seurat_clusters=="14"| seurat_clusters=="15"| seurat_clusters=="16"| seurat_clusters=="17"| seurat_clusters=="18"| seurat_clusters=="19"| seurat_clusters=="20")
+adimmunecell <- FindNeighbors(adimmunecell, dims = 1:10)
+adimmunecell <- FindClusters(adimmunecell,graph.name = "integrated_snn",resolution = 0.4)
+adimmunecell <- RunUMAP(adimmunecell, dims = 1:10)
+DimPlot(adimmunecell3, reduction = "umap", label = TRUE, split.by = "condition")
+
+#DEGs in each AD immune cell clusters
+onlyad <- subset(adimmunecell, condition == "AD")
+Idents(onlyad) <- onlyad$seurat_clusters
+onlyad.markers <- FindAllMarkers(onlyad, min.pct = 0.25, logfc.threshold = 0.25)
+write.csv(onlyad.markers, "onlyaddeg.csv")
+
+# 3) psoriasis data is available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE151177
+
+FeaturePlot(PSdata, "PTPRC")
+
+#Analysis of only immune cells in PS data
+psimmunecell <- subset(PSdata, seurat_clusters == "0"| seurat_clusters=="1"| seurat_clusters=="2"| seurat_clusters=="3"| seurat_clusters=="4"| seurat_clusters=="5"| seurat_clusters=="6"| seurat_clusters=="7"| seurat_clusters=="8"| seurat_clusters=="10")
+psimmunecell <- FindNeighbors(psimmunecell, dims = 1:10)
+psimmunecell <- FindClusters(psimmunecell,graph.name = "integrated_snn",resolution = 0.5)
+psimmunecell <- RunUMAP(psimmunecell, dims = 1:10)
+DimPlot(psimmunecell, reduction = "umap", label = TRUE)
+
+##################################################################
+##STEP2 : Cell chat analysis from SLE, AD, PS immune cell datasets
+##################################################################
+library(CellChat)
+library(reticulate)
+
+##2-1) Assign another cluster name in [SLE immune cell] seurat object
+sle.ids <- c("S01", "S03", "S08", "S10", "S06", "S04", "S09", "S07", "S02" ,"S05")
+names(sle.ids) <- levels(sleimmunecell)
+sleimmunecell <- RenameIdents(sleimmunecell, sle.ids)
+sleimmunecell@active.ident ->sleimmunecell$annotation
+Idents(sleimmunecell) <- 'annotation'
+
+##Create SLE immune cell CellChat object
+subset(sleimmunecell, subset =(Condition =="HC")) -> HC
+subset(sleimmunecell, subset =(Condition =="NL")) -> SLE
+DefaultAssay(HC) <- "RNA"
+DefaultAssay(SLE) <- "RNA"
+
+Chat_HC <- createCellChat(object = HC)
+Chat_SLE <- createCellChat(object = SLE)
+
+CellChatDB <- CellChatDB.human
+CellChatDB.use <- CellChatDB
+Chat_HC@DB <- CellChatDB.use
+Chat_SLE@DB <- CellChatDB.use
+Chat_HC <- subsetData(Chat_HC)
+future::plan("multisession", workers = 4)
+Chat_SLE <- subsetData(Chat_SLE)
+future::plan("multisession", workers = 4)
+
+Chat_HC <- identifyOverExpressedGenes(Chat_HC)
+Chat_HC <- identifyOverExpressedInteractions(Chat_HC)
+Chat_SLE <- identifyOverExpressedGenes(Chat_SLE)
+Chat_SLE <- identifyOverExpressedInteractions(Chat_SLE)
+
+Chat_HC <- computeCommunProb(Chat_HC)
+Chat_SLE <- computeCommunProb(Chat_SLE)
+
+Chat_HC <- filterCommunication(Chat_HC, min.cells = 5)
+Chat_SLE <- filterCommunication(Chat_SLE, min.cells = 5)
+Chat_HC <- computeCommunProbPathway(Chat_HC)
+Chat_SLE <- computeCommunProbPathway(Chat_SLE)
+Chat_HC <- aggregateNet(Chat_HC)
+Chat_SLE <- aggregateNet(Chat_SLE)
+# Compute the network centrality scores
+suppressPackageStartupMessages(library(future))
+Chat_HC <- netAnalysis_computeCentrality(Chat_HC, slot.name = "netP")
+Chat_SLE <- netAnalysis_computeCentrality(Chat_SLE, slot.name = "netP")
+
+##Merge CellChat object
+object.list <- list(Healthy = Chat_HC, Lupus = Chat_SLE)
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+gg1 <- netVisual_heatmap(cellchat)
+#> Do heatmap based on a merged object
+gg2 <- netVisual_heatmap(cellchat, measure = "weight")
+#> Do heatmap based on a merged object
+gg1 + gg2
+
+
+##2-2) Assign another cluster name in [AD immune cell] seurat object
+ad.ids <- c("A01","A10","A02", "A09", "A07", "A06", "A10", "A04", "A11", "A03", "A05", "A12", "A08", "A13")
+names(ad.ids) <- levels(adimmunecell)
+adimmunecell <- RenameIdents(adimmunecell, ad.ids)
+adimmunecell@active.ident ->adimmunecell$annotation
+Idents(adimmunecell) <- 'annotation'
+
+##Create AD immune cell CellChat object
+subset(ad.immune, subset =(condition =="HC")) -> HC2
+subset(ad.immune, subset =(condition =="AD")) -> AD2
+DefaultAssay(HC2) <- "RNA"
+DefaultAssay(AD2) <- "RNA"
+
+Chat_HC2 <- createCellChat(object = HC2)
+Chat_AD2 <- createCellChat(object = AD2)
+
+CellChatDB <- CellChatDB.human
+CellChatDB.use <- CellChatDB
+Chat_HC2@DB <- CellChatDB.use
+Chat_AD2@DB <- CellChatDB.use
+Chat_HC2 <- subsetData(Chat_HC2)
+future::plan("multisession", workers = 4)
+Chat_AD2 <- subsetData(Chat_AD2)
+future::plan("multisession", workers = 4)
+
+Chat_HC2 <- identifyOverExpressedGenes(Chat_HC2)
+Chat_HC2 <- identifyOverExpressedInteractions(Chat_HC2)
+Chat_AD2 <- identifyOverExpressedGenes(Chat_AD2)
+Chat_AD2 <- identifyOverExpressedInteractions(Chat_AD2)
+
+Chat_HC2 <- computeCommunProb(Chat_HC2)
+Chat_AD2 <- computeCommunProb(Chat_AD2)
+
+Chat_HC2 <- filterCommunication(Chat_HC2, min.cells = 5)
+Chat_AD2 <- filterCommunication(Chat_AD2, min.cells = 5)
+Chat_HC2 <- computeCommunProbPathway(Chat_HC2)
+Chat_AD2 <- computeCommunProbPathway(Chat_AD2)
+Chat_HC2 <- aggregateNet(Chat_HC2)
+Chat_AD2 <- aggregateNet(Chat_AD2)
+# Compute the network centrality scores
+Chat_HC2 <- netAnalysis_computeCentrality(Chat_HC2, slot.name = "netP")
+Chat_AD2 <- netAnalysis_computeCentrality(Chat_AD2, slot.name = "netP")
+
+##Merge CellChat object
+object2.list <- list(Healthy = Chat_HC2, Atopic = Chat_AD2)
+cellchat2 <- mergeCellChat(object2.list, add.names = names(object2.list))
+gg1 <- netVisual_heatmap(cellchat2)
+#> Do heatmap based on a merged object
+gg2 <- netVisual_heatmap(cellchat2, measure = "weight")
+#> Do heatmap based on a merged object
+gg1 + gg2
+
+##2-3) Assign another cluster name in [PS immune cell] seurat object
+ps.ids <- c("P01", "P02", "P08","P09","P03", "P10", "P05", "P06", "P07","P04")
+names(ps.ids) <- levels(psimmunecell)
+psimmunecell <- RenameIdents(psimmunecell, ps.ids)
+psimmunecell@active.ident ->psimmunecell$annotation
+Idents(psimmunecell) <- 'annotation'
+
+##Create PS immune cell CellChat object
+subset(psimmunecell, subset =(stim =="Control")) -> HC3
+subset(psimmunecell, subset =(stim =="Psoriasis")) -> PS3
+DefaultAssay(HC3) <- "RNA"
+DefaultAssay(PS3) <- "RNA"
+
+Chat_HC3 <- createCellChat(object = HC3)
+Chat_PS3 <- createCellChat(object = PS3)
+
+CellChatDB <- CellChatDB.human
+CellChatDB.use <- CellChatDB
+Chat_HC3@DB <- CellChatDB.use
+Chat_PS3@DB <- CellChatDB.use
+Chat_HC3 <- subsetData(Chat_HC3)
+future::plan("multisession", workers = 4)
+Chat_PS3 <- subsetData(Chat_PS3)
+future::plan("multisession", workers = 4)
+
+Chat_HC3 <- identifyOverExpressedGenes(Chat_HC3)
+Chat_HC3 <- identifyOverExpressedInteractions(Chat_HC3)
+Chat_PS3 <- identifyOverExpressedGenes(Chat_PS3)
+Chat_PS3 <- identifyOverExpressedInteractions(Chat_PS3)
+
+Chat_HC3 <- computeCommunProb(Chat_HC3)
+Chat_PS3 <- computeCommunProb(Chat_PS3)
+
+Chat_HC3 <- filterCommunication(Chat_HC3, min.cells = 5)
+Chat_PS3 <- filterCommunication(Chat_PS3, min.cells = 5)
+Chat_HC3 <- computeCommunProbPathway(Chat_HC3)
+Chat_PS3 <- computeCommunProbPathway(Chat_PS3)
+Chat_HC3 <- aggregateNet(Chat_HC3)
+Chat_PS3 <- aggregateNet(Chat_PS3)
+# Compute the network centrality scores
+Chat_HC3 <- netAnalysis_computeCentrality(Chat_HC3, slot.name = "netP")
+Chat_PS3 <- netAnalysis_computeCentrality(Chat_PS3, slot.name = "netP")
+
+##Merge CellChat object
+object3.list <- list(Healthy = Chat_HC3, Psoriasis = Chat_PS3)
+cellchat3 <- mergeCellChat(object3.list, add.names = names(object3.list))
+gg1 <- netVisual_heatmap(cellchat3)
+#> Do heatmap based on a merged object
+gg2 <- netVisual_heatmap(cellchat3, measure = "weight")
+gg1+gg2
+
+##2-4) ranknet: from myeloid cells <-> T cells in SLE, AD, and PS datasets
+#SLE T cell& Myeloid
+c("S06","S04","S02","S03","S07")-> SLE_T
+c("S09","S08","S10")-> SLE_Myeloid
+
+#AD T cell& Myeloid
+c("A01","A02","A04","A05","A08")-> AD_T
+c("A06","A09","A10","A11")-> AD_Myeloid
+
+#PS T cell& Myeloid
+c("P01","P02","P03","P05","P06")-> PS_T
+c("P08","P09","P10")-> PS_Myeloid
+
+gg3 <- rankNet(cellchat, mode = "comparison", sources.use = SLE_Myeloid,targets.use = SLE_T, stacked = T, do.stat = TRUE)
+gg4 <- rankNet(cellchat, mode = "comparison",sources.use = AD_T, targets.use = AD_Myeloid, stacked = T, do.stat = TRUE)
+gg3
+gg4
+
+lupus_object$Lupus -> onlyLupus
+atopic_object$Atopy -> onlyAtopy
+psoriasis_object$Psoriasis->onlyPsoriasis
+
+pathways.show <- c("CD86") 
+par(mfrow=c(1,1))
+netVisual_aggregate(onlyLupus, signaling = pathways.show, layout = "circle")
+
+
+##################################################################
+##STEP3 : T cell gene signatures derived from AD, SLE, and PS datasets
+##################################################################
+# 3-1) SLE T cell subclustering
+sle_tcell <- subset(sleimmunecell, seurat_clusters=="1"| seurat_clusters=="5"| seurat_clusters=="7"| seurat_clusters=="8"| seurat_clusters=="9")
+sle_tcell <- FindNeighbors(sle_tcell, dims = 1:10)
+sle_tcell <- FindClusters(sle_tcell, resolution = 0.4, graph.name = "integrated_snn")
+sle_tcell <- RunUMAP(sle_tcell, dims = 1:10)
+Idents(sle_tcell)<-sle_tcell$seurat_clusters
+DimPlot(sle_tcell, reduction = "umap", label=FALSE)
+FeaturePlot(sle_tcell, features = c("CD3D"))
+
+# SLE T cell top 10 DEGs
+Idents(sle_tcell)<- sle_tcell$Condition
+sle_tcell.Allmarkers <- FindAllMarkers(sle_tcell, only.pos = TRUE)
+sle_tcell.Allmarkers %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) -> top10
+DotPlot(object = sle_tcell, features = top10$gene)
+
+## 
+new.ids <- c("Treg", "Tcy", "Th", "HSP T-1", "HSP T-2", "IFN T")
+names(new.ids) <- levels(sle_tcell)
+sle_tcell <- RenameIdents(sle_tcell, new.ids)
+sle_tcell@active.ident ->sle_tcell$rename
+Idents(sle_tcell) <- "rename"
+
+paste0(sle_tcell$rename,"_", sle_tcell$Condition)-> sle_tcell$cluster2
+sle_tcell$cluster2 -> Idents(sle_tcell)
+Idents(sle_tcell) %>% table()
+sle_tcell@active.ident <-factor(sle_tcell$cluster2,levels = c('IFN T_NL', 'IFN T_HC','HSP T-2_NL', 'HSP T-2_HC', 'HSP T-1_NL', 'HSP T-1_HC', 'Th_NL', 'Tcy_NL', 'Tcy_HC', 'Th_HC', 'Treg_NL', 'Treg_HC'))
+t <- DotPlot(sle_tcell, features=c("PARP14", "MTRNR2L12","IFI27", "MX1", "ISG15","LY6E","XIST", "XAF1", "IFI6", "IFI44L"), dot.scale=10, cols="RdBu") 
+t
+
+# 3-2) AD T cell subclustering
+ad_tcell <- subset(adimmunecell, seurat_clusters == "0"| seurat_clusters=="2"| seurat_clusters=="7"| seurat_clusters=="9"| seurat_clusters=="10")
+ad_tcell <- FindNeighbors(ad_tcell, dims = 1:10)
+ad_tcell <- FindClusters(ad_tcell, resolution = 0.4, graph.name = "integrated_snn")
+ad_tcell <- RunUMAP(ad_tcell, dims = 1:10)
+Idents(ad_tcell)<-ad_tcell$seurat_clusters
+DimPlot(ad_tcell, reduction = "umap", label=FALSE)
+FeaturePlot(ad_tcell, features = c("CD3D"))
+
+# AD T cell top 10 DEGs
+Idents(ad_tcell)<- ad_tcell$condition
+ad_tcell.Allmarkers <- FindAllMarkers(ad_tcell, only.pos = TRUE)
+ad_tcell.Allmarkers %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) -> top10
+DotPlot(object = ad_tcell, features = top10$gene)
+
+new.ids <- c("Teff", "Treg", "Tnaive", "und", "humCD4", "CD4 T")
+names(new.ids) <- levels(ad_tcell)
+ad.immune <- RenameIdents(ad_tcell, new.ids)
+ad.immune@active.ident ->ad.immune$rename
+Idents(ad.immune) <- "rename"
+
+paste0(ad.immune$rename,"_", ad.immune$condition)-> ad.immune$cluster2
+ad.immune$cluster2 -> Idents(ad.immune)
+Idents(ad.immune) %>% table()
+ad.immune@active.ident <-factor(ad.immune$cluster2,levels = c('CD4 T_AD', 'CD4 T_HC','humCD4_AD', 'humCD4_HC', 'und_AD', 'und_HC', 'Tnaive_AD', 'Tnaive_HC', 'Treg_AD', 'Treg_HC', 'Teff_AD', 'Teff_HC'))
+t <- DotPlot(ad.immune, features=c("IL22","IL13","HSPA1B","HSP90AA1", "RPS4Y1", "S100A9","HSPA1A","KRT16","KRT14","S100A8"), dot.scale=10, cols="RdBu") 
+t
+
+# 3-3) PS T cell subclustering
+ps_tcell <- subset(psimmunecell, seurat_clusters=="0"| seurat_clusters=="1"| seurat_clusters=="4"| seurat_clusters=="6"| seurat_clusters=="7")
+ps_tcell <- FindNeighbors(ps_tcell, dims = 1:10)
+ps_tcell <- FindClusters(ps_tcell, resolution = 0.4, graph.name = "integrated_snn")
+ps_tcell <- RunUMAP(ps_tcell, dims = 1:10)
+Idents(ps_tcell)<-ps_tcell$seurat_clusters
+DimPlot(ps_tcell, reduction = "umap", label=FALSE)
+FeaturePlot(ps_tcell, features = c("CD3D"))
+
+# PS T cell top 10 DEGs
+Idents(ps_tcell)<- ps_tcell$stim
+ps_tcell.Allmarkers <- FindAllMarkers(ps_tcell, only.pos = TRUE)
+ps_tcell.Allmarkers %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) -> top10
+DotPlot(object = ps_tcell, features = top10$gene)
+
+new.ids <- c("Tnaive", "und", "Tcy", "Treg", "Ig-T", "Th17")
+names(new.ids) <- levels(ps_tcell)
+ps.immune <- RenameIdents(ps_tcell, new.ids)
+ps.immune@active.ident ->ps.immune$rename
+Idents(ps.immune) <- "rename"
+
+paste0(ps.immune$rename,"_", ps.immune$stim)-> ps.immune$cluster2
+ps.immune$cluster2 -> Idents(ps.immune)
+Idents(ps.immune) %>% table()
+ps.immune@active.ident <-factor(ps.immune$cluster2,levels = c('Tnaive_Psoriasis', 'Tnaive_Control','und_Psoriasis', 'und_Control', 'Tcy_Psoriasis', 'Tcy_Control', 'Treg_Psoriasis', 'Treg_Control', 'Ig-T_Psoriasis', 'Ig-T_Control', 'Th17_Psoriasis', 'Th17_Control'))
+t <- DotPlot(sle.immune, features=c("GNLY", "IGLC2","RIPOR2", "SELL", "CD27","LINC00861","PI3","XIST", "KLF2", "SPRR2D"), dot.scale=10, cols="RdBu") 
+t
+
+##################################################################
+##STEP4 : pathway analysis: derived from AD, SLE, and PS T cell datasets
+##################################################################
+library(enrichGO)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(AnnotationDbi)
+
+Idents(sle_tcell) <- sle_tcell$Condition
+immune.Allmarkers <- FindAllMarkers(sle_tcell)
+subset(immune.Allmarkers, cluster=="Control") -> HC
+
+subset(HC, avg_log2FC <0 & p_val_adj <= 0.01) -> NL_pos  #HC_neg, it means SLE_pos
+subset(HC, avg_log2FC >0 & p_val_adj <= 0.01) -> HC_pos  #HC_pos, it means SLE_neg
+
+UNIVERSE <- rownames(immune.Allmarkers) %>% data.frame()
+
+mapIds(org.Hs.eg.db, keys = UNIVERSE$. ,
+       column = "ENTREZID", keytype = "SYMBOL") -> UNIVERSE
+
+mapIds(org.Hs.eg.db, keys = NL_pos$gene,
+       column = "ENTREZID", keytype = "SYMBOL") -> NL_pos
+
+mapIds(org.Hs.eg.db, keys = HC_pos$gene,
+       column = "ENTREZID", keytype = "SYMBOL") -> HC_pos
+
+
+enrich_ego <- enrichGO(gene          = NL_pos,
+                       universe      = UNIVERSE,
+                       OrgDb         = org.Hs.eg.db,
+                       ont           = "BP",
+                       pAdjustMethod = "BH",
+                       pvalueCutoff  = 0.01,
+                       qvalueCutoff  = 0.05,
+                       readable      = TRUE)
+
+enrich_ego2 <- enrichGO(gene          = HC_pos,
+                        OrgDb         = org.Hs.eg.db,
+                        ont           = "BP",
+                        pAdjustMethod = "BH",
+                        pvalueCutoff  = 0.01,
+                        qvalueCutoff  = 0.05,
+                        readable      = TRUE)
+library(ggplot2)
+barplot(enrich_ego, showCategory = 5)+theme_classic()
+enrich_dotplot <- merge_result(list(NL_pos =enrich_ego , NL_neg =enrich_ego2)) %>% barplot(, showCategory = 20) 
+enrich_dotplot
+
+
+##################################################################
+##STEP5 : Correlation of SLE, AD, and PS T cell top10 DEGs with 
+# immune checkpoint inhibitors and exhaustion Tcell markers
+##################################################################
+##5-1) Get TCGA-SKCM datasets
+#BiocManager::install("BioinformaticsFMRP/TCGAbiolinksGUI.data")
+#BiocManager::install("BioinformaticsFMRP/TCGAbiolinks")
+library(TCGAbiolinks)
+
+#
+query <- TCGAbiolinks:::GDCquery(project="TCGA-SKCM",
+                                 data.category="Transcriptome Profiling",
+                                 data.type="Gene Expression Quantification",
+                                 workflow.type="STAR - Counts")
+
+GDCdownload(query,method = "api")
+
+data <- GDCprepare(query)
+
+library(SummarizedExperiment)
+eset <- assay(data)
+write.csv(eset, file="TCGA_SKCM.csv")
+
+#Change ENSEMBL ID to Gene name
+sigs.df <-as.data.frame(TCGA_SKCM)
+rownames(sigs.df) <- sigs.df$Gene
+keytypes(org.Hs.eg.db)
+sigs.df <-mapIds(org.Hs.eg.db, keys = rownames(sigs.df), keytype ="ENSEMBL", column = "SYMBOL")
+sigs.df <- as.data.frame(sigs.df)
+
+data1 <-as.data.frame(TCGA_SKCM)
+rownames(data1) <- data1$Gene
+x_t <- cbind(sigs.df$sigs.df,data1)
+colnames(x_t)[1] <- c("NAME")
+write.csv(x_t, "melanoma01.csv")
+
+
+##5-2) Run GSVA
+#BiocManager::install("GSVA")
+#BiocManager::install("GSVAdata")
+#install.packages("GSA")
+library(GSVA)
+library(GSEABase)
+library(GSVAdata)
+library(GSA)
+
+#before run GSVA, make gmt file first using top10 DEGs from SLE, AD, and PS datasets
+##gmt file should made with tab deliminated txt file
+genesets <- getGmt("geneset3.gmt")
+
+##Data from TCGA mealnoma##
+data1 <- read.csv("TCGA-SKCM.csv")
+A <- as.matrix(data1)
+rownames(A) <- A[,1]
+A <- A[,2:ncol(A)]
+A_num <- apply(A,2,as.numeric)
+rownames(A_num) <- rownames(A)
+
+mexp <- rowMeans(A_num)
+maskexp <- mexp > 0.005
+gsva_result <- gsva(A_num[maskexp, ], genesets, method="gsva", kcdf="Gaussian", min.sz=1, max.sz=Inf,
+                    verbose=FALSE, parallel.sz=1)
+
+write.csv(gsva_result, "normalized_gsvascore.csv")
+
