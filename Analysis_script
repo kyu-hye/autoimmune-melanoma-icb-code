@@ -350,6 +350,8 @@ library(enrichGO)
 library(org.Hs.eg.db)
 library(clusterProfiler)
 library(AnnotationDbi)
+library(enrichplot)
+library(DOSE)
 
 Idents(sle_tcell) <- sle_tcell$Condition
 immune.Allmarkers <- FindAllMarkers(sle_tcell)
